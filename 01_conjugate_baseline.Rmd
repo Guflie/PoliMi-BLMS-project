@@ -1,0 +1,232 @@
+---
+title: "1. Conjugate baseline: how satisfied are customers, before any covariates?"
+subtitle: "Airline Customer Satisfaction -- Bayesian Learning project"
+output:
+  html_document:
+    df_print: paged
+    mathjax: "default"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 0. Data
+
+Builds directly on `00_data_audit_eda_subsampling.Rmd`: we read
+`data/train_subsample.csv`, the same stratified n ~= 1200 training split
+that every later section (JAGS, BAS, prediction) reuses unchanged.
+
+```{r load-data}
+train <- read.csv("data/train_subsample.csv", stringsAsFactors = FALSE)
+train$cabin_class <- factor(train$cabin_class, levels = c("Eco", "Eco Plus", "Business"))
+
+n <- nrow(train)
+x <- sum(train$satisfaction == "satisfied")
+
+cat("n =", n, " | satisfied =", x, " | raw proportion =", round(x / n, 4), "\n")
+```
+
+## 1. Model
+
+Each customer $i$ is treated as an independent trial,
+$X_i \mid p \sim \text{Bernoulli}(p)$, where $p$ is the (unknown) true
+satisfaction rate in the customer population. Aggregating over the $n$
+customers, the total number satisfied, $X = \sum_i X_i$, follows
+
+$$X \mid p \sim \text{Binomial}(n, p), \qquad p \sim \mathscr{B}e(\alpha_0, \beta_0)$$
+
+Since the Beta distribution is conjugate to the Binomial likelihood, the
+posterior is available in closed form -- no sampler needed:
+
+$$p \mid X \sim \mathscr{B}e(\alpha_0 + X,\ \beta_0 + n - X)$$
+
+```{r helper-functions}
+mean.beta <- function(a, b) a / (a + b)
+
+var.beta <- function(a, b) (a * b) / ((a + b)^2 * (a + b + 1))
+
+mode.beta <- function(a, b) {
+  ifelse(a > 1 & b > 1, (a - 1) / (a + b - 2),
+    ifelse(a <= 1 & b > 1, 0,
+      ifelse(a > 1 & b <= 1, 1, NA)))
+}
+
+ci.beta <- function(a, b, level = 0.95) {
+  qbeta(c((1 - level) / 2, 1 - (1 - level) / 2), a, b)
+}
+```
+
+## 2. Overall estimate and prior sensitivity
+
+Three candidate priors, chosen so the check is analytically transparent:
+a flat $\mathscr{B}e(1,1)$, the Jeffreys $\mathscr{B}e(0.5,0.5)$, and a
+mildly regularizing $\mathscr{B}e(2,2)$.
+
+```{r prior-sensitivity-table}
+priors <- list(
+  "Beta(1,1) uniform"      = c(1, 1),
+  "Beta(0.5,0.5) Jeffreys" = c(0.5, 0.5),
+  "Beta(2,2) skeptical"    = c(2, 2)
+)
+
+sensitivity <- do.call(rbind, lapply(names(priors), function(nm) {
+  a0 <- priors[[nm]][1]; b0 <- priors[[nm]][2]
+  a1 <- a0 + x; b1 <- b0 + n - x
+  ci <- ci.beta(a1, b1)
+  data.frame(
+    prior     = nm,
+    a0        = a0,
+    b0        = b0,
+    post_mean = round(mean.beta(a1, b1), 4),
+    post_mode = round(mode.beta(a1, b1), 4),
+    post_var  = signif(var.beta(a1, b1), 4),
+    ci_2.5    = round(ci[1], 4),
+    ci_97.5   = round(ci[2], 4)
+  )
+}))
+
+sensitivity
+```
+
+```{r prior-sensitivity-plot, fig.width=10, fig.height=3.5}
+par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+
+for (nm in names(priors)) {
+  a0 <- priors[[nm]][1]; b0 <- priors[[nm]][2]
+  a1 <- a0 + x; b1 <- b0 + n - x
+
+  curve(dbeta(p, a0, b0), from = 0, to = 1, xname = "p",
+        col = "red", lwd = 2, ylim = c(0, 26),
+        xlab = "p (satisfaction rate)", ylab = "density", main = nm)
+  curve(dbeta(p, a1, b1), from = 0, to = 1, xname = "p",
+        add = TRUE, col = "blue", lwd = 2)
+
+  if (nm == names(priors)[1]) {
+    legend("topleft", c("Prior", "Posterior"), col = c("red", "blue"),
+           lwd = 2, bty = "n", cex = 0.85)
+  }
+}
+```
+
+All three posteriors agree to at least three decimal places -- with
+n ~= 1200, the data overwhelms any of these mild priors. This is the
+headline point of the sensitivity check: the specific prior chosen among
+these three does not materially affect the conclusion.
+
+## 3. Subgroup estimates
+
+The same closed-form update, refit independently within each level of
+cabin class, customer type, and travel type (each subgroup posterior is
+its own exact Beta -- this is *not* a hierarchical/pooled model). We use
+the uniform Beta(1,1) prior throughout, since Section 2 already showed
+the prior choice barely matters at these sample sizes.
+
+Note: only `satisfaction` and `cabin_class` were stratification variables
+in the Section 0 sampling design, so `customer_type` and `travel_type`
+subgroup sizes/splits reflect ordinary sampling variability rather than
+an exact match to their population shares.
+
+```{r subgroup-fits}
+fit_group <- function(data, group_var, levels_order = NULL, a0 = 1, b0 = 1) {
+  lv <- if (!is.null(levels_order)) levels_order else sort(unique(data[[group_var]]))
+  do.call(rbind, lapply(lv, function(g) {
+    sub <- data[data[[group_var]] == g, ]
+    n_g <- nrow(sub)
+    x_g <- sum(sub$satisfaction == "satisfied")
+    a1 <- a0 + x_g; b1 <- b0 + n_g - x_g
+    ci <- ci.beta(a1, b1)
+    data.frame(
+      group = g, n = n_g, x = x_g,
+      post_mean = round(mean.beta(a1, b1), 4),
+      ci_2.5    = round(ci[1], 4),
+      ci_97.5   = round(ci[2], 4)
+    )
+  }))
+}
+
+cat("--- By cabin class ---\n")
+fit_group(train, "cabin_class", levels_order = c("Eco", "Eco Plus", "Business"))
+
+cat("--- By customer type ---\n")
+fit_group(train, "customer_type")
+
+cat("--- By travel type ---\n")
+fit_group(train, "travel_type")
+```
+
+```{r subgroup-plot, fig.width=10, fig.height=3.5}
+par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
+
+plot_group <- function(var, lv, cols, main) {
+  plot(NA, xlim = c(0, 1), ylim = c(0, 26),
+       xlab = "p (satisfaction rate)", ylab = "density", main = main)
+  for (i in seq_along(lv)) {
+    sub <- train[train[[var]] == lv[i], ]
+    n_g <- nrow(sub); x_g <- sum(sub$satisfaction == "satisfied")
+    curve(dbeta(p, 1 + x_g, 1 + n_g - x_g), from = 0, to = 1, xname = "p",
+          add = TRUE, col = cols[i], lwd = 2)
+  }
+  legend("topleft", legend = lv, col = cols, lwd = 2, bty = "n", cex = 0.75)
+}
+
+plot_group("cabin_class",  c("Eco", "Eco Plus", "Business"),
+           c("#378ADD", "#D85A30", "#1D9E75"), "By cabin class")
+plot_group("customer_type", c("Loyal Customer", "disloyal Customer"),
+           c("#1D9E75", "#D85A30"), "By customer type")
+plot_group("travel_type",   c("Business travel", "Personal Travel"),
+           c("#1D9E75", "#D85A30"), "By travel type")
+```
+
+## 4. Monte Carlo comparison between subgroups
+
+For each pair, draw a large number of samples from each subgroup's exact
+Beta posterior and estimate $P(p_A > p_B \mid \text{data})$ as the
+empirical proportion of paired draws where one exceeds the other. This
+needs no closed form and is the same Monte Carlo logic used throughout
+the rest of the course.
+
+```{r mc-comparison}
+set.seed(2026)
+M <- 2e5
+
+mc_compare <- function(data, group_var, g1, g2, a0 = 1, b0 = 1) {
+  s1 <- data[data[[group_var]] == g1, ]
+  s2 <- data[data[[group_var]] == g2, ]
+  n1 <- nrow(s1); x1 <- sum(s1$satisfaction == "satisfied")
+  n2 <- nrow(s2); x2 <- sum(s2$satisfaction == "satisfied")
+
+  p1 <- rbeta(M, a0 + x1, b0 + n1 - x1)
+  p2 <- rbeta(M, a0 + x2, b0 + n2 - x2)
+
+  mean(p1 > p2)
+}
+
+results <- data.frame(
+  comparison = c("P(Business > Eco)",
+                 "P(Loyal Customer > disloyal Customer)",
+                 "P(Business travel > Personal Travel)"),
+  probability = c(
+    mc_compare(train, "cabin_class", "Business", "Eco"),
+    mc_compare(train, "customer_type", "Loyal Customer", "disloyal Customer"),
+    mc_compare(train, "travel_type", "Business travel", "Personal Travel")
+  )
+)
+results
+```
+
+## 5. Summary
+
+- Overall satisfaction rate: posterior mean `r round(mean.beta(1+x,1+n-x),3)`,
+  95% credible interval essentially identical across all three priors tried.
+- Cabin class is the sharpest cut: Business customers are satisfied far more
+  often than Eco or Eco Plus, and the Monte Carlo comparison puts essentially
+  all posterior mass on Business exceeding Eco.
+- Customer type shows the largest gap of any subgroup split (loyal vs.
+  disloyal customers), again with no meaningful posterior overlap.
+- Travel type shows a real but more modest difference -- the Monte Carlo
+  probability is high but not effectively 1, because the two posteriors
+  overlap slightly (visible in the Section 3 plot).
+- No covariates, no regression, no sampler beyond the Monte Carlo
+  comparison step -- everything here is exact and auditable, which is the
+  point of this section relative to what follows.
