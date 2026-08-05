@@ -114,8 +114,8 @@ Section 3 of the project, so it matters whether they are independent. We reuse
 the correlation-heatmap recipe from the JAGS lab notes (`image()` +
 `RColorBrewer`, rather than pulling in a new plotting package just for this).
 
-```{r}
-plot_corr_heatmap <- function(mat, labels = colnames(mat), title = "Correlation matrix") {
+```{r, fig.width=10, fig.height=8}
+plot_corr_heatmap <- function(mat, labels = colnames(mat), title = "Correlation matrix", show_values=TRUE, digits_to_show=3) {
   pal <- colorRampPalette(rev(brewer.pal(11, "RdBu")))(100)
   layout(matrix(c(1, 2), nrow = 1), widths = c(4, 1))
   par(mar = c(7, 7, 4, 1))
@@ -125,6 +125,15 @@ plot_corr_heatmap <- function(mat, labels = colnames(mat), title = "Correlation 
   axis(1, 1:ncol(mat), labels, las = 2, cex.axis = 0.8)
   axis(2, 1:ncol(mat), labels, las = 2, cex.axis = 0.8)
   box()
+  
+  # show correltion values within boxes
+  if (show_values) {
+    grid <- expand.grid(i = 1:nrow(mat), j = 1:ncol(mat))
+    text(grid$i, grid$j,
+         labels = round(mat[cbind(grid$i, grid$j)], digits_to_show),
+         cex = 0.7)
+  }
+  
   # colorbar
   par(mar = c(7, 1, 4, 3))
   z <- seq(-1, 1, length.out = 100)
