@@ -1,0 +1,91 @@
+---
+title: "2. Core Bayesian logistic regression (JAGS, vague priors)"
+subtitle: "Airline Customer Satisfaction -- Bayesian Learning project"
+output:
+  html_document:
+    df_print: paged
+    mathjax: "default"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 0. Dati
+
+Si riparte dallo stesso train set stratificato usato in `01_conjugate_baseline.Rmd`.
+
+```{r libraries}
+library(rjags)
+library(coda)
+```
+
+```{r load-data}
+train <- read.csv("data/train_subsample.csv", stringsAsFactors = FALSE)
+train$cabin_class <- factor(train$cabin_class, levels = c("Eco", "Eco Plus", "Business"))
+
+y <- as.numeric(train$satisfaction == "satisfied")
+n <- length(y)
+
+cat("n =", n, " | satisfatti =", sum(y), "\n")
+```
+
+## 1. Modello 0: solo intercetta
+
+Prima di aggiungere qualunque covariata, verifichiamo che l'impianto JAGS
+funzioni con il modello piu' semplice possibile:
+
+$$y_i \mid p \overset{ind}{\sim} \text{Bernoulli}(p), \qquad \text{logit}(p) = \beta_0, \qquad \beta_0 \sim \mathcal{N}(0, 100)$$
+
+```{r model-intercept-only}
+# TODO (prossimo passo, insieme): scrivere qui la stringa del modello JAGS
+# per l'intercetta sola.
+#
+# Promemoria: dnorm() in JAGS/BUGS vuole la PRECISIONE, non la varianza.
+# N(0, 100) in varianza si scrive dnorm(0, 0.01), non dnorm(0, 100).
+```
+
+## 2. Fit
+
+```{r fit-intercept-only}
+# TODO: qui andranno jags.model(), update() per il burn-in, e coda.samples()
+# per raccogliere i campioni di beta0 (e magari p = ilogit(beta0)).
+# Promemoria: set.seed() da solo non basta per riproducibilita' in JAGS --
+# ne parliamo quando arriviamo a questo pezzo.
+```
+
+## 3. Diagnostica
+
+```{r diagnostics-intercept-only}
+# TODO: trace plot di beta0, gelman.diag(), effectiveSize() -- lo stesso
+# terzetto usato nelle lab del corso (01_JAGS.Rmd).
+```
+
+## 4. Confronto con la baseline coniugata (sezione 1)
+
+Il tasso di soddisfazione implicito da questo modello, $\text{ilogit}(\beta_0)$,
+deve essere vicinissimo alla media a posteriori Beta-Binomiale gia' calcolata
+in `01_conjugate_baseline.Rmd`. Con n ~= 1200 la differenza tra i due prior
+e' trascurabile: se i due numeri non coincidono a meno di qualche millesimo,
+il problema e' nel codice JAGS, non nei dati.
+
+```{r compare-with-section1}
+# TODO: confrontare mean(ilogit(campioni di beta0)) con il valore ottenuto
+# in 01_conjugate_baseline.Rmd.
+```
+
+## 5. Aggiunta delle covariate
+
+*Da sviluppare incrementalmente, una covariata alla volta, solo dopo che il
+modello a sola intercetta converge bene. Covariate previste: age,
+seat_comfort, flight_distance (log(1+x)), cabin_class, dep_delay e
+arr_delay_extra (da `00_data_audit_eda_subsampling.Rmd`), travel_type,
+customer_type.*
+
+## 6. Confronto cabin_class: dummy vs ordinale
+
+*Da sviluppare dopo la sezione 5 -- due fit distinti, confrontati via WAIC.*
+
+## 7. Confronto link: logit vs probit
+
+*Da sviluppare in parallelo alla sezione 6 -- stesso confronto via WAIC.*
