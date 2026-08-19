@@ -24,6 +24,7 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(RColorBrewer)
+library(tidyverse)
 ```
 
 The source file has 22 columns whose original names contain spaces and
@@ -115,10 +116,10 @@ nrow(data)
 
 ## 3. Exploratory analysis
 
-### 3.1 Overall correlation
+### 3.1 Box plots
 
 ```{r}
-# modify categorical variables in order to run correlation
+# modify categorical variables in order to show boxplots and later correlation
 
 num.data = data
 cat_vars = names(num.data)[!sapply(num.data, is.numeric)]
@@ -126,6 +127,17 @@ cat_vars = names(num.data)[!sapply(num.data, is.numeric)]
 mappings <- lapply(num.data[cat_vars], levels)
 num.data[cat_vars] <- lapply(num.data[cat_vars], as.integer)
 ```
+
+```{r fig.width=16, fig.height=14}
+num.data %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = variable, y = value)) +
+  geom_boxplot() +
+  facet_wrap(~ variable, scales = "free")
+```
+
+### 3.2 Overall correlation
 
 ```{r fig.width=12, fig.height=10}
 
@@ -168,7 +180,7 @@ corr_mat = cor(num.data[, !names(num.data) == "row_id"])
 plot_corr_heatmap(corr_mat, title = "Correlation between all variables")
 ```
 
-### 3.2 Correlation between the 14 service items
+### 3.3 Correlation between the 14 service items
 
 The 14 ordinal items are the core covariates for the horseshoe model in
 Section 3 of the project, so it matters whether they are independent. We
@@ -201,7 +213,7 @@ near-substitutes for one another, so a model that shrinks the redundant
 ones towards zero is preferable to plain vague-prior logistic regression
 with all 14 included.
 
-### 3.2 A few service items, by satisfaction
+### 3.4 A few service items, by satisfaction
 
 ```{r, fig.width=7, fig.height=5}
 box_df <- data %>%
